@@ -1,5 +1,23 @@
 # Goblin CLI
 
+## Sample `.goblin` file
+
+```
+PREFIX=.bin
+
+https://goblin.run/github.com/sqlc-dev/sqlc@1.27.0
+https://goblin.run/github.com/air-verse/air@1.52.3
+https://goblin.run/github.com/golangci/golangci-lint/cmd/golangci-lint@c2e095c022a97360f7fff5d49fbc11f273be929a
+```
+
+## Sample generated `.goblin.lock` file
+
+```
+github.com/air-verse/air 1.52.3 1.52.3
+github.com/golangci/golangci-lint/cmd/golangci-lint c2e095c022a97360f7fff5d49fbc11f273be929a c2e095c022a97360f7fff5d49fbc11f273be929a
+github.com/sqlc-dev/sqlc 1.27.0 1.27.0
+```
+
 ## Sample Output
 
 ```
