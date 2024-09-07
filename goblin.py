@@ -16,6 +16,12 @@ VERSION_LATEST = "latest"
 
 
 def is_pinned_version(v: str):
+    """
+    Returns true for pinned package identifiers. Currently this includes
+    semantic versions including 3 numbers and something that looks like
+    a commit hash.
+    """
+
     return (
         re.search(r"^[a-f0-9]{36,}$", v) is not None
         or re.search(r"^v?[0-9]+\.[0-9]+\.[0-9]+$", v) is not None
@@ -30,6 +36,14 @@ class LockFileEntry:
 
 
 def read_lock_file_line(line: str) -> LockFileEntry | None:
+    """
+    Parse a line out of the lock file. This includes the package
+    name, the desired version, and the actual version. The
+    the difference between the desired version and actual version
+    is in cases where wildcards or patterns are used to indicate
+    which package version to install.
+    """
+
     if len(line.strip()) == 0:
         return None
 
@@ -49,6 +63,11 @@ def read_lock_file_line(line: str) -> LockFileEntry | None:
 
 
 def read_lock_file(p: pathlib.Path) -> typing.Generator[LockFileEntry, None, None]:
+    """
+    Read every line from the target lock file and return a sequence of
+    LockFileEntry objects.
+    """
+
     with p.open("r") as fp:
         for line in fp:
             if parsed := read_lock_file_line(line):
@@ -56,6 +75,11 @@ def read_lock_file(p: pathlib.Path) -> typing.Generator[LockFileEntry, None, Non
 
 
 def write_lock_file(p: pathlib.Path, entries: list[LockFileEntry]) -> None:
+    """
+    Given a new list of lock file entries, rewrite the lock file at
+    the specified path.
+    """
+
     with p.open("w") as fp:
         for entry in entries:
             fp.write(
@@ -65,23 +89,24 @@ def write_lock_file(p: pathlib.Path, entries: list[LockFileEntry]) -> None:
 
 @dataclasses.dataclass
 class GoblinShellScriptContents:
-    bin: str | None
     version: str | None
 
 
 def parse_goblin_shell_script(content: str) -> GoblinShellScriptContents:
+    """
+    This is the especially hacky bit. All I'm getting right now is a
+    shell script from goblin.run, so I opted to parse out some information
+    from this script to power my CLI. Currently I only need to
+    extract the resolved version.
+    """
+
     in_start = False
 
-    bin: str | None = None
     version: str | None = None
 
     for line in content.splitlines():
         if line.startswith("start() {"):
             in_start = True
-            continue
-
-        if in_start and line.strip().startswith("bin="):
-            bin = line.strip().split("=", maxsplit=2)[1].strip("'\"")
             continue
 
         if in_start and line.strip().startswith("version="):
@@ -92,7 +117,6 @@ def parse_goblin_shell_script(content: str) -> GoblinShellScriptContents:
             in_start = False
 
     return GoblinShellScriptContents(
-        bin=bin,
         version=version,
     )
 
@@ -127,12 +151,25 @@ def main():
 
     with goblin_file.open("r") as fp:
         for line in fp:
+            # ignore blank lines and commits in the .goblin file
             if len(line.strip()) == 0 or line.strip().startswith("#"):
                 continue
 
+            # handle environment variables in the .goblin file
+            # these will be injected when the shells script is invoked
+            # later on
             if re.search("^[a-zA-Z_]+=", line):
                 key, value = line.split("=", maxsplit=2)
 
+                # I can't support OUT right now because it could make it
+                # difficult to detect if the target binary is available
+                # and cleanup old binaries if it's renamed using OUT.
+                #
+                # It wouldn't be a ton of work, but it could be supported.
+                # I could basically just parse OUT variables and apply
+                # them to the following package entry. I'd just need to
+                # track the previous bin values in the lock file so I
+                # can cleanup when it's changed.
                 if key == "OUT":
                     print(
                         "[WARNING] Setting OUT is not currently support in the goblin file. Downloaded binaries will be named after the last path segment in the URL."
@@ -148,8 +185,11 @@ def main():
                 print("Invalid URL:", line, file=sys.stderr)
                 continue
 
+            # paths always have a leading slash and that's useless to me
             package_name = package_url.path.lstrip("/")
 
+            # if we have an @ sign in the path then we've been provided a
+            # version otherwise we will assume latest
             if "@" in package_name:
                 package_name, version = package_name.split("@", maxsplit=2)
             else:
@@ -163,18 +203,28 @@ def main():
 
     lock_file_contents = list(read_lock_file(goblin_lock_file))
 
+    # PREFIX is handled as being relative to the goblin file
+    # unless it's an absolute path
     install_prefix = pathlib.Path(env["PREFIX"])
     if not install_prefix.is_absolute():
         install_prefix = goblin_file.parent.joinpath(install_prefix)
 
+    # The goblin script prompts for superuser password's even when
+    # the directory can be created by the user. This prevents that
+    # little nuance from surfacing. I think it's just a simple check
+    # missing from the goblin shell script because it's currently
+    # using -w and not trying -e or checking if the parent directory
+    # is writable
     if not install_prefix.exists():
         install_prefix.mkdir(parents=True)
 
+    # This is probably just debug output but can help confirm the
+    # CLI read the environment variables correctly
     for key, value in env.items():
         if key == "PREFIX":
-            print(f"PREFIX={install_prefix.relative_to(pathlib.Path.cwd())}")
+            print(f"\tPREFIX={install_prefix.relative_to(pathlib.Path.cwd())}")
         else:
-            print(f"{key}={value}")
+            print(f"\t{key}={value}")
 
     check_status = True
 
@@ -193,11 +243,15 @@ def main():
 
         bin = package_name_parts[-1]
 
+        # Pin the logging prefix to 24 characters to keep things tidy
         if len(log_label) > 24:
             log_label = f"{log_label[0:24]}…"
         else:
             log_label = f"{log_label:<24}"
 
+        # This could be fancier, but there's nothing wrong with a
+        # little loop action. If a .goblin file has 50,000 entries
+        # then I'd argue that's a problem
         for entry_index, entry in enumerate(lock_file_contents):
             if entry.package == package.package_name:
                 print(
@@ -210,6 +264,9 @@ def main():
 
         goblin_shell_script: str | None = None
 
+        # If we are allowed to fetch and the version supplied is some
+        # kind of pattern we are going to need to read the resolved
+        # version from the API
         if flag_fetch and not is_pinned_version(package.version):
             print(f"[{log_label}] Resolving package version: {package.version}")
 
@@ -226,6 +283,9 @@ def main():
             goblin_out = parse_goblin_shell_script(goblin_shell_script)
             resolved_version = goblin_out.version
 
+            # This probably means the shell script changed enough that we couldn't
+            # parse the version. This is brittle, but could easily be addressed by
+            # some alternative API endpoint
             if resolved_version is None:
                 print(
                     f"[{log_label}] [WARNING] Unable to resolve version for",
@@ -246,6 +306,7 @@ def main():
         install_location = install_prefix.joinpath(bin)
 
         if flag_check:
+            # The .goblin file speficically indicates a different version than the lock file
             if lock_file_entry.desired_version != package.version:
                 print(
                     f"[{log_label}] Lock file does not match package version. Lock file version is '{lock_file_entry.desired_version}' and package version is '{package.version}'"
@@ -253,6 +314,8 @@ def main():
                 check_status = False
                 continue
 
+            # The .goblin file matches the lock file, but clearly it's never been installed
+            # due to the missing actual_version value
             if lock_file_entry.actual_version is None:
                 print(
                     f"[{log_label}] Lock file matches package version, but the lock file does not indicate a package was every installed. The desired package version is '{package.version}'"
@@ -260,6 +323,9 @@ def main():
                 check_status = False
                 continue
 
+            # We were allowed to fetch and there is newer version available upstream
+            # It's debateable whether this is a --check failure, but since I offered --no-fetch
+            # then I figured why not?
             if flag_fetch and resolved_version != lock_file_entry.actual_version:
                 print(
                     f"[{log_label}] There is a newer version available. Resolved version is '{resolved_version}, but '{lock_file_entry.actual_version}' is current installed."
@@ -322,11 +388,14 @@ def main():
 
         lock_file_entry.actual_version = resolved_version
 
+        # Check if our installation needed to be added to the lock file
+        # or if we are updating an existing entry
         if lock_file_entry_index < 0:
             lock_file_contents.append(lock_file_entry)
         else:
             lock_file_contents[lock_file_entry_index] = lock_file_entry
 
+    # Time to exit if this was a --check run
     if flag_check:
         exit(0 if check_status else 1)
 
