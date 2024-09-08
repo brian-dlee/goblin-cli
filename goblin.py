@@ -16,7 +16,7 @@ import typing
 VERSION_LATEST = "latest"
 
 
-def is_pinned_version(v: str):
+def is_pinned_version(v: str) -> bool:
     """
     Returns true for pinned package identifiers. Currently this includes
     semantic versions including 3 numbers and something that looks like
@@ -129,7 +129,7 @@ class GoblinPackage:
     version: str
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--check", action="store_true")
     parser.add_argument("--verbose", action="store_true")
