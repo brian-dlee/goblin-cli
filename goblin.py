@@ -2,6 +2,7 @@
 
 import argparse
 import dataclasses
+import logging
 import pathlib
 import re
 import sys
@@ -131,11 +132,19 @@ class GoblinPackage:
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--check", action="store_true")
+    parser.add_argument("--verbose", action="store_true")
     parser.add_argument("--no-fetch", dest="fetch", action="store_false")
     args = parser.parse_args()
 
     flag_check: bool = args.check
     flag_fetch: bool = args.fetch
+    flag_verbose: bool = args.verbose
+
+    logging.basicConfig(
+        format="%(levelname)s: %(asctime)s %(message)s",
+        datefmt="%I:%M:%S %p",
+        level=logging.DEBUG if flag_verbose else logging.WARNING,
+    )
 
     goblin_file = pathlib.Path.cwd().joinpath(".goblin")
     goblin_lock_file = goblin_file.parent.joinpath(".goblin.lock")
@@ -216,15 +225,17 @@ def main():
     # using -w and not trying -e or checking if the parent directory
     # is writable
     if not install_prefix.exists():
+        logging.info("Creating install directory: %s", str(install_prefix))
         install_prefix.mkdir(parents=True)
+    else:
+        logging.debug("Install directory exists: %s", str(install_prefix))
 
     # This is probably just debug output but can help confirm the
     # CLI read the environment variables correctly
     for key, value in env.items():
         if key == "PREFIX":
-            print(f"\tPREFIX={install_prefix.relative_to(pathlib.Path.cwd())}")
-        else:
-            print(f"\t{key}={value}")
+            value = str(install_prefix.relative_to(pathlib.Path.cwd()))
+        logging.debug(f"Environment variable: {key}={value}")
 
     check_status = True
 
