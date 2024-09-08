@@ -1,5 +1,20 @@
 # Goblin CLI
 
+A proof of concept Goblin CLI for goblin.run. It's currently written in python with no dependencies, but
+it could be ported over to another language like Go if there's motivation.
+
+**Requirements:** Python >3.9, I think
+
+## Direnv integration
+
+```
+PATH_add .bin
+
+if ! python scripts/goblin.py --check --no-fetch >/dev/null 2>&1; then
+  echo ".bin directory is out of date. Run 'python goblin.py' to update." >&2
+fi
+```
+
 ## Sample `.goblin` file
 
 ```
